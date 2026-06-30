@@ -1,0 +1,11 @@
+# 代理自簽憑證:私鑰絕不上傳,憑證本地用 openssl 重新產生(README 有指令)
+proxy.key
+proxy.crt
+
+# Python
+__pycache__/
+*.pyc
+
+# 暫存
+*.log
+*.tmp
