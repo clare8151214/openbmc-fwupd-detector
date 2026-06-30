@@ -57,11 +57,34 @@ xyz.openbmc_project.Software.Activation          Ready→Activating→Active 或
 
 兩層互補:**未授權 401** 只有流量層看得到 (bmcweb 不記 journal);**內部處理錯誤** 只有 journald 看得到。
 
-```text
-curl ──> redfish_proxy.py :2444 (TLS 終止,看明文) ──> bmcweb :2443 ──> software-manager
-            │ 看 Authorization / 回應碼                          │ 寫 journald
-            ↓                                                    ↓
-      HTTP 層警告                                           detector.py 看 journald
+```mermaid
+flowchart LR
+    T["trigger.sh / curl<br/>測試與攻擊端"]
+
+    subgraph HTTP["HTTP 流量層"]
+        P["redfish_proxy.py :2444<br/>TLS 終止,看明文"]
+        A1["HTTP 層警告<br/>未授權 / 重複 / 被拒"]
+    end
+
+    subgraph BMC["OpenBMC romulus QEMU"]
+        W["bmcweb :2443"]
+        S["phosphor-software-manager"]
+        J[("journald")]
+    end
+
+    subgraph EVENT["內部事件層"]
+        D["detector.py"]
+        A2["事件層警告<br/>正常 / 竄改 / 重複"]
+    end
+
+    T -->|HTTPS| P
+    P -->|轉發 HTTPS| W
+    P -.->|看 Authorization 與回應碼| A1
+    W --> S
+    W -->|寫 log| J
+    S -->|寫 log| J
+    J -->|journalctl -f over SSH| D
+    D -.->|正規式分類| A2
 ```
 
 ## 元件
