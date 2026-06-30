@@ -89,13 +89,28 @@ flowchart LR
 
 ## 元件
 
+三條互補的資料來源:HTTP 流量(proxy)、journald 事件(detector)、D-Bus 事件(dbus_monitor)。
+
 | 檔案 | 作用 |
 | --- | --- |
-| `redfish_proxy.py` | HTTP 層,TLS 終止代理,看 Authorization 與回應碼報警 |
-| `detector.py` | 內部事件層,串流 BMC journald 報警 |
-| `trigger.sh` | 觸發異常情境,給 demo 用,設 `RF=https://127.0.0.1:2444` 改走代理 |
-| `_askpass.sh` | 提供 SSH 密碼,detector 內部用 |
+| `redfish_proxy.py` | HTTP 流量層,TLS 終止代理,看 Authorization 與回應碼報警 |
+| `detector.py` | journald 事件層,串流 BMC journald 報警;`--json` 輸出 NDJSON 給 SIEM |
+| `dbus_monitor.py` | D-Bus 事件層,`busctl monitor` 訂閱 Software signal,看 InterfacesAdded 與 Activation;`--json` 給 SIEM |
+| `trigger.sh` | 觸發情境,給 demo 用,設 `RF=https://127.0.0.1:2444` 改走代理 |
+| `_askpass.sh` | 提供 SSH 密碼 |
 | `proxy.crt` `proxy.key` | 代理的自簽憑證 |
+
+### 給 SIEM 的 JSON 輸出
+
+`detector.py --json` 與 `dbus_monitor.py --json` 每筆事件輸出一行 JSON(NDJSON),可直接接 SIEM:
+
+```bash
+python3 detector.py --json | tee -a /var/log/fwupd-detect.ndjson
+```
+
+```json
+{"ts": "2026-06-30T16:13:00+0800", "severity": "NORMAL", "rule": "正常更新:image 已接收解包", "source": "journald", "message": "...Untaring /tmp/images/update.tar..."}
+```
 
 ## 跑法 pre-demo
 

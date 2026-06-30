@@ -10,10 +10,11 @@
 需在 HTTP 流量層觀測,見 README。
 
 用法:
-  python3 detector.py              # 連預設 127.0.0.1:2222 root/0penBmc
+  python3 detector.py              # 連預設 127.0.0.1:2222 root/0penBmc,彩色輸出
+  python3 detector.py --json       # 每筆事件輸出一行 JSON (NDJSON),給 SIEM 收
   BMC_SSH_PORT=2222 python3 detector.py
 """
-import os, sys, re, time, subprocess
+import os, sys, re, time, json, subprocess
 from collections import deque
 
 BMC_HOST = os.environ.get("BMC_HOST", "127.0.0.1")
@@ -23,6 +24,7 @@ os.environ.setdefault("BMC_PASS", os.environ.get("BMC_PASS", "0penBmc"))
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ASKPASS = os.path.join(HERE, "_askpass.sh")
+JSON_MODE = "--json" in sys.argv   # SIEM 用:每筆事件輸出一行 JSON (NDJSON)
 
 # 規則: (標籤, 嚴重度, 正規式)。順序由嚴到鬆,命中第一條即分類。
 RULES = [
@@ -46,6 +48,18 @@ C = {"ALERT": "\033[1;31m", "UPDATE": "\033[1;33m", "NORMAL": "\033[1;32m",
 def color(sev, msg):
     return f"{C.get(sev, C['INFO'])}{msg}{C['0']}"
 
+def info(msg):
+    print(color("INFO", msg), file=(sys.stderr if JSON_MODE else sys.stdout), flush=True)
+
+def emit(sev, rule, raw="", source="journald"):
+    """輸出一筆偵測事件:JSON 模式給 SIEM,否則彩色給人看。"""
+    if JSON_MODE:
+        rec = {"ts": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "severity": sev,
+               "rule": rule, "source": source, "message": raw}
+        print(json.dumps(rec, ensure_ascii=False), flush=True)
+    else:
+        print(color(sev, f"[{sev}] {rule}") + (f"  | {raw}" if raw else ""), flush=True)
+
 def ssh_journal_stream():
     """以單一持久 SSH 連線串流 BMC 的 journalctl -f。"""
     remote = "journalctl -f -o short-iso -n 0 2>/dev/null"
@@ -60,7 +74,8 @@ def ssh_journal_stream():
                             env=env, text=True, bufsize=1)
 
 def main():
-    print(color("INFO", f"[detector] 連線 {BMC_USER}@{BMC_HOST}:{BMC_PORT},監看韌體更新異常..."))
+    info(f"[detector] 連線 {BMC_USER}@{BMC_HOST}:{BMC_PORT},監看韌體更新異常"
+         + ("(JSON/SIEM 模式)" if JSON_MODE else ""))
     update_events = deque()  # 更新活動的時間戳,用於重複更新偵測
     proc = ssh_journal_stream()
     try:
@@ -69,19 +84,18 @@ def main():
             for label, sev, rx in RULES:
                 if rx.search(line):
                     now = time.time()
-                    print(color(sev, f"[{sev}] {label}") + f"  | {line}")
+                    emit(sev, label, line)
                     # 重複更新偵測:每次 POST 只在錨點行計一次
                     if ATTEMPT_RX.search(line):
                         update_events.append(now)
                         while update_events and now - update_events[0] > WINDOW_S:
                             update_events.popleft()
                         if len(update_events) >= REPEAT_THRESHOLD:
-                            print(color("REPEAT",
-                                  f"[REPEAT] 重複更新!{WINDOW_S}s 內 {len(update_events)} 次更新嘗試"))
+                            emit("REPEAT", f"重複更新:{WINDOW_S}s 內 {len(update_events)} 次更新嘗試")
                             update_events.clear()
                     break
     except KeyboardInterrupt:
-        print("\n[detector] 結束")
+        info("[detector] 結束")
     finally:
         proc.terminate()
 
