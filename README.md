@@ -1,17 +1,20 @@
 # OpenBMC 韌體更新異常偵測原型
 
-> **English summary** — A two-layer anomaly detector for OpenBMC firmware updates via Redfish,
+> **English summary** — An anomaly detector and response prototype for OpenBMC firmware updates via Redfish,
 > built and verified on the romulus QEMU machine.
 > - `redfish_proxy.py` — TLS-terminating reverse proxy on the HTTP layer; flags unauthorized
 >   (HTTP 401), repeated, and rejected update requests by inspecting method / path /
 >   Authorization / status code.
 > - `detector.py` — internal-event layer; streams the BMC journald and flags normal,
 >   tampered/malformed, and repeated updates.
+> - `dbus_monitor.py` — D-Bus-event layer; watches Software object creation and Activation changes.
+> - `respond.py` — response layer; deletes suspicious staged software objects and verifies the
+>   functional/running firmware stays unchanged.
 > - `trigger.sh` — fires `normal` / `unauth` / `tampered` / `repeated` scenarios for demos.
 >
-> The two layers are complementary: bmcweb does not log 401s to journald, so unauthorized
+> The data sources are complementary: bmcweb does not log 401s to journald, so unauthorized
 > attempts are only visible at the proxy layer, while internal processing errors are only
-> visible in journald. MIT licensed.
+> visible in journald; D-Bus gives the authoritative software state. MIT licensed.
 
 本組專題 Security Analysis and Prototype of OpenBMC Firmware Update via Redfish 的偵測原型,在 romulus QEMU 上開發測試。
 
@@ -48,14 +51,16 @@ xyz.openbmc_project.Software.Activation          Ready→Activating→Active 或
 
 > 重要發現:bmcweb 預設只把更新「處理錯誤」寫進 journal,**不記 401 未授權**。所以未授權偵測屬於 traffic analysis 範疇,須靠封包擷取或反向代理,這也呼應投影片的 Redfish Traffic Analysis 主題。
 
-## 兩層偵測架構
+## 偵測與回應架構
 
 | 偵測層 | 元件 | 看得到 | 偵測 |
 | --- | --- | --- | --- |
 | HTTP 流量層 | `redfish_proxy.py` | method / path / Authorization / 回應碼 | 未授權、重複、被拒/失敗 |
 | 內部事件層 | `detector.py` | bmcweb 與 software-manager 的 journald | 竄改/格式錯誤、簽章失敗、重複 |
+| D-Bus 事件層 | `dbus_monitor.py` | Software object、Activation state | 正常 baseline、版本建立、驗章通過/失敗 |
+| Response 層 | `respond.py` | staged software object、Active version | 刪除可疑 staged 版本、確認 running 版本不變 |
 
-兩層互補:**未授權 401** 只有流量層看得到 (bmcweb 不記 journal);**內部處理錯誤** 只有 journald 看得到。
+各層互補:**未授權 401** 只有流量層看得到 (bmcweb 不記 journal);**內部處理錯誤** 可由 journald 分類;**正常/失敗狀態機** 以 D-Bus 最權威;**response** 則負責把可疑 staged 版本刪掉並確認 Active 版本不變。
 
 ```mermaid
 flowchart LR
@@ -77,6 +82,11 @@ flowchart LR
         A2["事件層警告<br/>正常 / 竄改 / 重複"]
     end
 
+    subgraph RESP["Response 層"]
+        R["respond.py"]
+        A3["刪除 staged 版本<br/>保留 Active 版本"]
+    end
+
     T -->|HTTPS| P
     P -->|轉發 HTTPS| W
     P -.->|看 Authorization 與回應碼| A1
@@ -85,6 +95,9 @@ flowchart LR
     S -->|寫 log| J
     J -->|journalctl -f over SSH| D
     D -.->|正規式分類| A2
+    S -->|D-Bus Software objects| R
+    R -.->|Object.Delete| S
+    R -.->|確認 Active 不變| A3
 ```
 
 ## 元件
@@ -96,6 +109,7 @@ flowchart LR
 | `redfish_proxy.py` | HTTP 流量層,TLS 終止代理,看 Authorization 與回應碼報警 |
 | `detector.py` | journald 事件層,串流 BMC journald 報警;`--json` 輸出 NDJSON 給 SIEM |
 | `dbus_monitor.py` | D-Bus 事件層,`busctl monitor` 訂閱 Software signal,看 InterfacesAdded 與 Activation;`--json` 給 SIEM |
+| `respond.py` | Response 層,刪除可疑 staged 版本並確認 functional/running 版本不變 |
 | `trigger.sh` | 觸發情境,給 demo 用,設 `RF=https://127.0.0.1:2444` 改走代理 |
 | `_askpass.sh` | 提供 SSH 密碼 |
 | `proxy.crt` `proxy.key` | 代理的自簽憑證 |
@@ -154,6 +168,32 @@ cd ~/openbmc-fwupd
 ```
 
 > `normal` 走檔案投放(romulus 的 Redfish 更新端點壞掉,見 LEARNING 筆記步驟五)。每跑一次會在 BMC 的 tmpfs 多暫存一個版本,連跑多次後可重開 QEMU 清掉。
+
+### Response / rollback demo
+
+這裡的 rollback 是 pre-demo 可安全展示的 response:不啟用可疑版本,刪除 staged software object,並確認原本 Active/running 版本不變。
+
+```bash
+# 先建立一個 Ready staged 版本
+./trigger.sh normal
+
+# 查看目前 software objects
+python3 respond.py status
+
+# 刪除最新 Ready staged 版本,保留 Active/running 版本
+python3 respond.py rollback --latest-ready
+
+# 或先預演不刪除
+python3 respond.py rollback --latest-ready --dry-run
+```
+
+預期輸出重點:
+
+```text
+[RESPONSE] block activation: do not set RequestedActivation/Activation to Activating
+[RESPONSE] delete staged object through xyz.openbmc_project.Object.Delete.Delete
+[OK] blocked and restored: staged object removed, functional/running firmware unchanged
+```
 
 ## 已知限制 pre-demo 範圍
 
