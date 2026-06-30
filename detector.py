@@ -32,8 +32,12 @@ RULES = [
      re.compile(r"update_service\.hpp|handleBMCUpdate|Invalid request descriptor", re.I)),
     ("簽章/驗證失敗", "ALERT",
      re.compile(r"(image )?verif|signature|Activation\S*\.(Failed|Invalid)", re.I)),
+    ("romulus 已知雜訊:software association 不完整", "INFO",
+     re.compile(r"mapperx.*Found invalid association on path /xyz/openbmc_project/software/", re.I)),
+    ("MANIFEST 選用欄位缺少 CompatibleName", "INFO",
+     re.compile(r"version-software-manager.*No values found in MANIFEST file for key: CompatibleName=", re.I)),
     ("正常更新:image 已接收解包", "NORMAL",
-     re.compile(r"Untaring /tmp/images|version-software-manager", re.I)),
+     re.compile(r"Untaring /tmp/images", re.I)),
     ("韌體更新活動", "UPDATE",
      re.compile(r"image-updater|software-?manager|UpdateService|/xyz/openbmc_project/software/", re.I)),
 ]

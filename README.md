@@ -198,6 +198,7 @@ python3 respond.py rollback --latest-ready --dry-run
 ## 已知限制 pre-demo 範圍
 
 - 未授權 401 已由 `redfish_proxy.py` 在 HTTP 層補上;限制是流量須改走代理 2444。正式部署可把代理擺在 bmcweb 前當反向代理。
+- romulus 正常建立 `/xyz/openbmc_project/software/<id>` 後,`mapperx` 可能印 `Found invalid association`。這是 association / inventory 對應不完整的已知雜訊,不是簽章驗證失敗;判斷正常 baseline 仍以 `Activation=Ready` 和 Version 物件存在為準。
 - 純亂數 image 在 bmcweb 解析階段即被擋 (HTTP 500),尚未走到簽章驗證;要演到 Activation=Failed 需「格式合法但簽章被改」的 image,列為進階。
 - 偵測規則為關鍵字與回應碼比對,正式版可改為訂閱 D-Bus `Software` signal 做結構化判斷。
 - 代理用自簽憑證,client 需 `-k` 略過驗證;正式版應換正規憑證。
