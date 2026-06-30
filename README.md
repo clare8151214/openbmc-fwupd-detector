@@ -1,5 +1,18 @@
 # OpenBMC 韌體更新異常偵測原型
 
+> **English summary** — A two-layer anomaly detector for OpenBMC firmware updates via Redfish,
+> built and verified on the romulus QEMU machine.
+> - `redfish_proxy.py` — TLS-terminating reverse proxy on the HTTP layer; flags unauthorized
+>   (HTTP 401), repeated, and rejected update requests by inspecting method / path /
+>   Authorization / status code.
+> - `detector.py` — internal-event layer; streams the BMC journald and flags normal,
+>   tampered/malformed, and repeated updates.
+> - `trigger.sh` — fires `normal` / `unauth` / `tampered` / `repeated` scenarios for demos.
+>
+> The two layers are complementary: bmcweb does not log 401s to journald, so unauthorized
+> attempts are only visible at the proxy layer, while internal processing errors are only
+> visible in journald. MIT licensed.
+
 本組專題 Security Analysis and Prototype of OpenBMC Firmware Update via Redfish 的偵測原型,在 romulus QEMU 上開發測試。
 
 ## 環境前提
