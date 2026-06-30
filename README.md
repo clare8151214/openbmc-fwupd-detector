@@ -123,9 +123,20 @@ cd ~/openbmc-fwupd
 ./trigger.sh normal      # 正常更新,detector 報綠色 [NORMAL],列出 Activation=Ready 的 Version 物件
 ./trigger.sh tampered    # detector 報 [ALERT] 竄改/格式錯誤的更新 image
 ./trigger.sh repeated    # detector 報 [REPEAT]
+./trigger.sh compare     # 一鍵連跑 normal + tampered,並排印出兩者結果(demo 推薦)
 ```
 
 `./trigger.sh info` 看更新服務現況。
+
+`compare` 的並排輸出範例:
+
+```text
+               | 正常(簽章包/檔案投放)   | 竄改(亂數/Redfish POST)
+  結果         | 建立 Version 物件        | bmcweb 500, 無 Version 物件
+  Activation   | Ready                   | (無)
+  Version      | 3.1.0-dev-320-...       | -
+  偵測器       | NORMAL(綠)              | ALERT(紅)
+```
 
 > `normal` 走檔案投放(romulus 的 Redfish 更新端點壞掉,見 LEARNING 筆記步驟五)。每跑一次會在 BMC 的 tmpfs 多暫存一個版本,連跑多次後可重開 QEMU 清掉。
 

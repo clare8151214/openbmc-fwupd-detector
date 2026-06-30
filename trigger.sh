@@ -1,6 +1,6 @@
 #!/bin/bash
 # 觸發韌體更新情境(正常 + 三種異常),給 detector.py 偵測 / demo 用。
-# 用法: ./trigger.sh [normal|unauth|tampered|repeated|info]
+# 用法: ./trigger.sh [normal|tampered|unauth|repeated|compare|info]
 # 需要另一個視窗先跑: python3 detector.py
 set -u
 # 預設直打 bmcweb (配 detector.py);設 RF=https://127.0.0.1:2444 改走代理 (配 redfish_proxy.py)
@@ -59,11 +59,40 @@ case "${1:-info}" in
     echo "  >> 合法包 → Activation=Ready、有 Version 物件,即正常 baseline"
     echo "  >> detector 會看到 phosphor-version-software-manager 的 Untaring 事件(NORMAL)"
     ;;
+  compare)
+    echo "========== 正常 vs 竄改 一鍵對照 =========="
+    # 正常:合法簽章包走檔案投放
+    echo "[1/2] 正常更新:投放合法簽章包到 /tmp/images ..."
+    [ -f "$IMG" ] || { echo "  找不到 image: $IMG"; exit 1; }
+    bmc_push "$IMG" /tmp/images/update.tar
+    sleep 4
+    IFS='|' read -r N_ACT N_VER _ <<<"$(bmc_ssh 'U=xyz.openbmc_project.Software.BMC.Updater
+      for p in $(busctl call xyz.openbmc_project.ObjectMapper /xyz/openbmc_project/object_mapper xyz.openbmc_project.ObjectMapper GetSubTreePaths sias /xyz/openbmc_project/software 0 0 2>/dev/null | tr " " "\n" | grep -oE "/xyz/openbmc_project/software/[0-9a-f]{8}" | sort -u); do
+        a=$(busctl get-property $U $p xyz.openbmc_project.Software.Activation Activation 2>/dev/null | grep -oE "Activations\.[A-Za-z]+")
+        v=$(busctl get-property $U $p xyz.openbmc_project.Software.Version Version 2>/dev/null | sed -E "s/^s \"//; s/\"$//")
+        case "$a" in *Ready) echo "$a|$v"; break;; esac
+      done')"
+    # 竄改:亂數 image 走 Redfish POST
+    echo "[2/2] 竄改更新:POST 亂數 image 到 Redfish ..."
+    head -c 4096 /dev/urandom > /tmp/tampered.bin
+    T_HTTP=$(code -X POST -H 'Content-Type: application/octet-stream' -u "$AUTH" --data-binary @/tmp/tampered.bin "$EP")
+    # 並排輸出
+    row() { printf '  %-12s | %-30s | %-30s\n' "$1" "$2" "$3"; }
+    echo
+    row "" "正常(簽章包/檔案投放)" "竄改(亂數/Redfish POST)"
+    row "------------" "------------------------------" "------------------------------"
+    row "結果" "建立 Version 物件" "bmcweb $T_HTTP, 無 Version 物件"
+    row "Activation" "${N_ACT#Activations.}" "(無)"
+    row "Version" "${N_VER:-?}" "-"
+    row "偵測器" "NORMAL(綠)" "ALERT(紅)"
+    echo
+    echo ">> 同時看 detector 視窗:綠色 [NORMAL] 與 紅色 [ALERT] 各一筆"
+    ;;
   info)
     echo "[trigger] 韌體更新服務現況"
     curl -sk -u "$AUTH" "$RF/redfish/v1/UpdateService" | python3 -m json.tool 2>/dev/null \
       | grep -E 'HttpPushUri|MaxImageSize|ServiceEnabled'
     ;;
   *)
-    echo "用法: $0 [normal|unauth|tampered|repeated|info]"; exit 1;;
+    echo "用法: $0 [normal|tampered|unauth|repeated|compare|info]"; exit 1;;
 esac
